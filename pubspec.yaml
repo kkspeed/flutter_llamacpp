@@ -1,0 +1,29 @@
+name: flutter_llamacpp
+description: >
+  Flutter plugin wrapping llama.cpp for on-device LLM inference.
+  Provides OpenAI-compatible chat/completion API with multi-modal and tool calling support.
+version: 0.1.0
+homepage: https://github.com/liwen/flutter_llamacpp
+
+environment:
+  sdk: ^3.7.0
+  flutter: ">=3.29.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  ffi: ^2.1.0
+  meta: ^1.12.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        ffiPlugin: true
+      ios:
+        ffiPlugin: true
