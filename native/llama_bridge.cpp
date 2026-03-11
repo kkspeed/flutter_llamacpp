@@ -323,6 +323,7 @@ char * llama_bridge_chat_completion(
     float  min_p       = req.value("min_p", 0.0f);
     int    max_tokens  = req.value("max_tokens", 512);
     bool   stream      = req.value("stream", true);
+    bool   enable_thinking = req.value("enable_thinking", false);
 
     // Rebuild sampler with request params
     if (ctx->sampler) { common_sampler_free(ctx->sampler); }
@@ -393,7 +394,7 @@ char * llama_bridge_chat_completion(
     inputs.tools                = tools;
     inputs.add_generation_prompt = true;
     inputs.use_jinja            = true;
-    inputs.enable_thinking      = true;
+    inputs.enable_thinking      = enable_thinking;
 
     std::string tool_choice_str = req.value("tool_choice", "auto");
     if (tool_choice_str == "none")     inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;

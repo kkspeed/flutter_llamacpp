@@ -11,6 +11,7 @@ class ChatCompletionRequest {
   final List<Tool>? tools;
   final String? toolChoice; // "auto", "none", "required"
   final bool stream;
+  final bool enableThinking;
 
   const ChatCompletionRequest({
     required this.messages,
@@ -22,6 +23,7 @@ class ChatCompletionRequest {
     this.tools,
     this.toolChoice,
     this.stream = true,
+    this.enableThinking = false,
   });
 
   Map<String, dynamic> toJson() {
@@ -33,6 +35,7 @@ class ChatCompletionRequest {
       'min_p': minP,
       'max_tokens': maxTokens,
       'stream': stream,
+      'enable_thinking': enableThinking,
     };
     if (tools != null && tools!.isNotEmpty) {
       map['tools'] = tools!.map((t) => t.toJson()).toList();
