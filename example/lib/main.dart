@@ -34,14 +34,40 @@ class LlamaCppExampleApp extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Model download URLs
+// Model configurations
 // ---------------------------------------------------------------------------
-const _modelUrl =
-    'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_S.gguf';
-const _mmprojUrl =
-    'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/mmproj-F16.gguf';
-const _modelFilename = 'Qwen3.5-0.8B-Q4_K_S.gguf';
-const _mmprojFilename = 'mmproj-F16.gguf';
+class _ModelConfig {
+  final String label;
+  final String modelUrl;
+  final String mmprojUrl;
+  final String modelFilename;
+  final String mmprojFilename;
+
+  const _ModelConfig({
+    required this.label,
+    required this.modelUrl,
+    required this.mmprojUrl,
+    required this.modelFilename,
+    required this.mmprojFilename,
+  });
+}
+
+const _availableModels = [
+  _ModelConfig(
+    label: 'Qwen 3.5 0.8B (Q4_K_S)',
+    modelUrl: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_S.gguf',
+    mmprojUrl: 'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/mmproj-F16.gguf',
+    modelFilename: 'Qwen3.5-0.8B-Q4_K_S.gguf',
+    mmprojFilename: 'mmproj-0.8B-F16.gguf',
+  ),
+  _ModelConfig(
+    label: 'Qwen 3.5 4B (Q4_K_M)',
+    modelUrl: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf',
+    mmprojUrl: 'https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/mmproj-F16.gguf',
+    modelFilename: 'Qwen3.5-4B-Q4_K_M.gguf',
+    mmprojFilename: 'mmproj-4B-F16.gguf',
+  ),
+];
 
 // ---------------------------------------------------------------------------
 // Chat Screen
@@ -68,6 +94,9 @@ class _ChatScreenState extends State<ChatScreen> {
   double _downloadProgress = 0;
   PerformanceStats? _lastPerf;
 
+  // Model selection
+  _ModelConfig _selectedModel = _availableModels[0];
+
   // Attached images for the next message
   final List<File> _pendingImages = [];
 
@@ -87,12 +116,12 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _checkExistingModels() async {
-    final modelFile = File('$_modelsDirPath/$_modelFilename');
+    final modelFile = File('$_modelsDirPath/${_selectedModel.modelFilename}');
     if (await modelFile.exists()) {
-      setState(() => _status = 'Model ready. Tap "Load" to start.');
+      setState(() => _status = '${_selectedModel.label} ready. Tap "Load" to start.');
     } else {
       setState(
-          () => _status = 'Model not downloaded. Tap "Download" to begin.');
+          () => _status = '${_selectedModel.label} not downloaded. Tap "Download" to begin.');
     }
   }
 
@@ -146,16 +175,16 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _downloadModel() async {
-    await _downloadFile(_modelUrl, _modelFilename);
-    await _downloadFile(_mmprojUrl, _mmprojFilename);
-    setState(() => _status = 'Models ready. Tap "Load" to start.');
+    await _downloadFile(_selectedModel.modelUrl, _selectedModel.modelFilename);
+    await _downloadFile(_selectedModel.mmprojUrl, _selectedModel.mmprojFilename);
+    setState(() => _status = '${_selectedModel.label} ready. Tap "Load" to start.');
   }
 
   // -- Load model --
 
   Future<void> _loadModel() async {
-    final modelPath = '$_modelsDirPath/$_modelFilename';
-    final mmprojPath = '$_modelsDirPath/$_mmprojFilename';
+    final modelPath = '$_modelsDirPath/${_selectedModel.modelFilename}';
+    final mmprojPath = '$_modelsDirPath/${_selectedModel.mmprojFilename}';
 
     if (!await File(modelPath).exists()) {
       setState(() => _status = 'Model file not found. Please download first.');
@@ -426,6 +455,29 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Model selector (only when not loaded)
+                if (_model == null && !_isLoading)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: DropdownButton<_ModelConfig>(
+                      value: _selectedModel,
+                      isExpanded: true,
+                      isDense: true,
+                      dropdownColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      items: _availableModels.map((m) {
+                        return DropdownMenuItem(
+                          value: m,
+                          child: Text(m.label, style: Theme.of(context).textTheme.bodySmall),
+                        );
+                      }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _selectedModel = value);
+                          _checkExistingModels();
+                        }
+                      },
+                    ),
+                  ),
                 Text(_status, style: Theme.of(context).textTheme.bodySmall),
                 if (_isLoading && _downloadProgress > 0)
                   Padding(
