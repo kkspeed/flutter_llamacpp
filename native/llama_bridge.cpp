@@ -343,7 +343,7 @@ char * llama_bridge_chat_completion(
             if (m["content"].is_string()) {
                 msg.content = m["content"].get<std::string>();
             } else if (m["content"].is_array()) {
-                // Multi-modal content parts
+                // Multi-modal content parts — only set content_parts, NOT content
                 for (auto & part : m["content"]) {
                     std::string type = part.value("type", "text");
                     if (type == "text") {
@@ -351,11 +351,14 @@ char * llama_bridge_chat_completion(
                         cp.type = "text";
                         cp.text = part.value("text", "");
                         msg.content_parts.push_back(cp);
-                        // Also append to content for non-VLM fallback
-                        if (!msg.content.empty()) msg.content += "\n";
-                        msg.content += cp.text;
+                    } else if (type == "image_url") {
+                        common_chat_msg_content_part cp;
+                        cp.type = "image_url";
+                        if (part.contains("image_url")) {
+                            cp.text = part["image_url"].value("url", "");
+                        }
+                        msg.content_parts.push_back(cp);
                     }
-                    // image_url parts are handled separately for VLM
                 }
             }
 
