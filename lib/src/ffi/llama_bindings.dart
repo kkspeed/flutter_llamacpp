@@ -16,10 +16,10 @@ typedef _ShutdownNative = Void Function();
 typedef _ShutdownDart = void Function();
 
 // llama_bridge_context * llama_bridge_load_model(const char * path, const char * params_json)
-typedef _LoadModelNative = Pointer<Void> Function(
-    Pointer<Utf8> modelPath, Pointer<Utf8> paramsJson);
-typedef _LoadModelDart = Pointer<Void> Function(
-    Pointer<Utf8> modelPath, Pointer<Utf8> paramsJson);
+typedef _LoadModelNative =
+    Pointer<Void> Function(Pointer<Utf8> modelPath, Pointer<Utf8> paramsJson);
+typedef _LoadModelDart =
+    Pointer<Void> Function(Pointer<Utf8> modelPath, Pointer<Utf8> paramsJson);
 
 // void llama_bridge_free_model(llama_bridge_context * ctx)
 typedef _FreeModelNative = Void Function(Pointer<Void> ctx);
@@ -30,8 +30,8 @@ typedef _ModelInfoNative = Pointer<Utf8> Function(Pointer<Void> ctx);
 typedef _ModelInfoDart = Pointer<Utf8> Function(Pointer<Void> ctx);
 
 // int llama_bridge_load_mmproj(llama_bridge_context * ctx, const char * path)
-typedef _LoadMmprojNative = Int32 Function(
-    Pointer<Void> ctx, Pointer<Utf8> path);
+typedef _LoadMmprojNative =
+    Int32 Function(Pointer<Void> ctx, Pointer<Utf8> path);
 typedef _LoadMmprojDart = int Function(Pointer<Void> ctx, Pointer<Utf8> path);
 
 // bool llama_bridge_has_mmproj(const llama_bridge_context * ctx)
@@ -39,24 +39,34 @@ typedef _HasMmprojNative = Bool Function(Pointer<Void> ctx);
 typedef _HasMmprojDart = bool Function(Pointer<Void> ctx);
 
 // Token callback: bool (*)(const char * token, void * user_data)
-typedef TokenCallbackNative = Bool Function(
-    Pointer<Utf8> token, Pointer<Void> userData);
+typedef TokenCallbackNative =
+    Void Function(Pointer<Utf8> token, Pointer<Void> userData);
 
 // char * llama_bridge_chat_completion(ctx, request_json, callback, user_data)
-typedef _ChatCompletionNative = Pointer<Utf8> Function(
-    Pointer<Void> ctx,
-    Pointer<Utf8> requestJson,
-    Pointer<NativeFunction<TokenCallbackNative>> callback,
-    Pointer<Void> userData);
-typedef _ChatCompletionDart = Pointer<Utf8> Function(
-    Pointer<Void> ctx,
-    Pointer<Utf8> requestJson,
-    Pointer<NativeFunction<TokenCallbackNative>> callback,
-    Pointer<Void> userData);
+typedef _ChatCompletionNative =
+    Pointer<Utf8> Function(
+      Pointer<Void> ctx,
+      Pointer<Utf8> requestJson,
+      Pointer<NativeFunction<TokenCallbackNative>> callback,
+      Pointer<Void> userData,
+    );
+typedef _ChatCompletionDart =
+    Pointer<Utf8> Function(
+      Pointer<Void> ctx,
+      Pointer<Utf8> requestJson,
+      Pointer<NativeFunction<TokenCallbackNative>> callback,
+      Pointer<Void> userData,
+    );
 
 // void llama_bridge_cancel(llama_bridge_context * ctx)
 typedef _CancelNative = Void Function(Pointer<Void> ctx);
 typedef _CancelDart = void Function(Pointer<Void> ctx);
+
+// int32_t llama_bridge_count_prompt_tokens(llama_bridge_context * ctx, const char * request_json)
+typedef _CountPromptTokensNative =
+    Int32 Function(Pointer<Void> ctx, Pointer<Utf8> requestJson);
+typedef _CountPromptTokensDart =
+    int Function(Pointer<Void> ctx, Pointer<Utf8> requestJson);
 
 // void llama_bridge_clear_context(llama_bridge_context * ctx)
 typedef _ClearContextNative = Void Function(Pointer<Void> ctx);
@@ -93,38 +103,55 @@ class LlamaBindings {
   late final _HasMmprojDart _hasMmproj;
   late final _ChatCompletionDart _chatCompletion;
   late final _CancelDart _cancel;
+  late final _CountPromptTokensDart _countPromptTokens;
   late final _ClearContextDart _clearContext;
   late final _ContextInfoDart _contextInfo;
   late final _GetPerfDart _getPerf;
   late final _FreeStringDart _freeString;
 
   LlamaBindings._(this._lib) {
-    _init = _lib
-        .lookupFunction<_InitNative, _InitDart>('llama_bridge_init');
-    _shutdown = _lib
-        .lookupFunction<_ShutdownNative, _ShutdownDart>('llama_bridge_shutdown');
-    _loadModel = _lib
-        .lookupFunction<_LoadModelNative, _LoadModelDart>('llama_bridge_load_model');
-    _freeModel = _lib
-        .lookupFunction<_FreeModelNative, _FreeModelDart>('llama_bridge_free_model');
-    _modelInfo = _lib
-        .lookupFunction<_ModelInfoNative, _ModelInfoDart>('llama_bridge_model_info');
-    _loadMmproj = _lib
-        .lookupFunction<_LoadMmprojNative, _LoadMmprojDart>('llama_bridge_load_mmproj');
-    _hasMmproj = _lib
-        .lookupFunction<_HasMmprojNative, _HasMmprojDart>('llama_bridge_has_mmproj');
+    _init = _lib.lookupFunction<_InitNative, _InitDart>('llama_bridge_init');
+    _shutdown = _lib.lookupFunction<_ShutdownNative, _ShutdownDart>(
+      'llama_bridge_shutdown',
+    );
+    _loadModel = _lib.lookupFunction<_LoadModelNative, _LoadModelDart>(
+      'llama_bridge_load_model',
+    );
+    _freeModel = _lib.lookupFunction<_FreeModelNative, _FreeModelDart>(
+      'llama_bridge_free_model',
+    );
+    _modelInfo = _lib.lookupFunction<_ModelInfoNative, _ModelInfoDart>(
+      'llama_bridge_model_info',
+    );
+    _loadMmproj = _lib.lookupFunction<_LoadMmprojNative, _LoadMmprojDart>(
+      'llama_bridge_load_mmproj',
+    );
+    _hasMmproj = _lib.lookupFunction<_HasMmprojNative, _HasMmprojDart>(
+      'llama_bridge_has_mmproj',
+    );
     _chatCompletion = _lib
-        .lookupFunction<_ChatCompletionNative, _ChatCompletionDart>('llama_bridge_chat_completion');
-    _cancel = _lib
-        .lookupFunction<_CancelNative, _CancelDart>('llama_bridge_cancel');
-    _clearContext = _lib
-        .lookupFunction<_ClearContextNative, _ClearContextDart>('llama_bridge_clear_context');
-    _contextInfo = _lib
-        .lookupFunction<_ContextInfoNative, _ContextInfoDart>('llama_bridge_context_info');
-    _getPerf = _lib
-        .lookupFunction<_GetPerfNative, _GetPerfDart>('llama_bridge_get_perf');
-    _freeString = _lib
-        .lookupFunction<_FreeStringNative, _FreeStringDart>('llama_bridge_free_string');
+        .lookupFunction<_ChatCompletionNative, _ChatCompletionDart>(
+          'llama_bridge_chat_completion',
+        );
+    _cancel = _lib.lookupFunction<_CancelNative, _CancelDart>(
+      'llama_bridge_cancel',
+    );
+    _countPromptTokens = _lib
+        .lookupFunction<_CountPromptTokensNative, _CountPromptTokensDart>(
+          'llama_bridge_count_prompt_tokens',
+        );
+    _clearContext = _lib.lookupFunction<_ClearContextNative, _ClearContextDart>(
+      'llama_bridge_clear_context',
+    );
+    _contextInfo = _lib.lookupFunction<_ContextInfoNative, _ContextInfoDart>(
+      'llama_bridge_context_info',
+    );
+    _getPerf = _lib.lookupFunction<_GetPerfNative, _GetPerfDart>(
+      'llama_bridge_get_perf',
+    );
+    _freeString = _lib.lookupFunction<_FreeStringNative, _FreeStringDart>(
+      'llama_bridge_free_string',
+    );
   }
 
   /// Get the singleton instance, loading the library if needed.
@@ -185,6 +212,14 @@ class LlamaBindings {
   }
 
   void cancel(Pointer<Void> ctx) => _cancel(ctx);
+
+  int countPromptTokens(Pointer<Void> ctx, String requestJson) {
+    final rj = requestJson.toNativeUtf8();
+    final result = _countPromptTokens(ctx, rj);
+    calloc.free(rj);
+    return result;
+  }
+
   void clearContext(Pointer<Void> ctx) => _clearContext(ctx);
 
   String contextInfo(Pointer<Void> ctx) {

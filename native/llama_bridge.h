@@ -39,9 +39,9 @@ typedef struct llama_bridge_context llama_bridge_context;
 
 // ---------------------------------------------------------------------------
 // Token streaming callback
-// Called for each generated token. Return false to stop generation.
+// Called for each generated token.
 // ---------------------------------------------------------------------------
-typedef bool (*llama_bridge_token_callback)(const char * token_text, void * user_data);
+typedef void (*llama_bridge_token_callback)(const char * token_text, void * user_data);
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -145,6 +145,15 @@ char * llama_bridge_chat_completion(
 
 /// Cancel an ongoing generation. Thread-safe.
 void llama_bridge_cancel(llama_bridge_context * ctx);
+
+/// Count prompt tokens for an OpenAI-format chat request after applying the
+/// model's chat template.
+///
+/// Returns the token count, or -1 on error.
+int32_t llama_bridge_count_prompt_tokens(
+    llama_bridge_context * ctx,
+    const char * request_json
+);
 
 // ---------------------------------------------------------------------------
 // Context management

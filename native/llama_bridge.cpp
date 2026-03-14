@@ -95,6 +95,101 @@ static bool is_valid_utf8(const char * s) {
     return true;
 }
 
+struct parsed_chat_request {
+    json raw;
+    std::vector<common_chat_msg> messages;
+    std::vector<common_chat_tool> tools;
+    bool enable_thinking = false;
+};
+
+static bool parse_chat_request(
+    const char * request_json,
+    parsed_chat_request & out,
+    std::string & error
+) {
+    try {
+        out.raw = json::parse(request_json);
+    } catch (...) {
+        error = "invalid JSON request";
+        return false;
+    }
+
+    out.enable_thinking = out.raw.value("enable_thinking", false);
+
+    if (out.raw.contains("messages") && out.raw["messages"].is_array()) {
+        for (auto & m : out.raw["messages"]) {
+            common_chat_msg msg;
+            msg.role = m.value("role", "user");
+
+            if (m["content"].is_string()) {
+                msg.content = m["content"].get<std::string>();
+            } else if (m["content"].is_array()) {
+                for (auto & part : m["content"]) {
+                    std::string type = part.value("type", "text");
+                    if (type == "text") {
+                        common_chat_msg_content_part cp;
+                        cp.type = "text";
+                        cp.text = part.value("text", "");
+                        msg.content_parts.push_back(cp);
+                    } else if (type == "image_url") {
+                        common_chat_msg_content_part cp;
+                        cp.type = "image_url";
+                        if (part.contains("image_url")) {
+                            cp.text = part["image_url"].value("url", "");
+                        }
+                        msg.content_parts.push_back(cp);
+                    }
+                }
+            }
+
+            if (m.contains("tool_call_id")) {
+                msg.tool_call_id = m["tool_call_id"].get<std::string>();
+            }
+
+            out.messages.push_back(msg);
+        }
+    }
+
+    if (out.raw.contains("tools") && out.raw["tools"].is_array()) {
+        for (auto & t : out.raw["tools"]) {
+            if (t.value("type", "") == "function" && t.contains("function")) {
+                common_chat_tool tool;
+                tool.name        = t["function"].value("name", "");
+                tool.description = t["function"].value("description", "");
+                if (t["function"].contains("parameters")) {
+                    tool.parameters = t["function"]["parameters"].dump();
+                }
+                out.tools.push_back(tool);
+            }
+        }
+    }
+
+    return true;
+}
+
+static common_chat_params build_chat_params(
+    llama_bridge_context * ctx,
+    const parsed_chat_request & req
+) {
+    common_chat_templates_inputs inputs;
+    inputs.messages              = req.messages;
+    inputs.tools                 = req.tools;
+    inputs.add_generation_prompt = true;
+    inputs.use_jinja             = true;
+    inputs.enable_thinking       = req.enable_thinking;
+
+    std::string tool_choice_str = req.raw.value("tool_choice", "auto");
+    if (tool_choice_str == "none") {
+        inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
+    } else if (tool_choice_str == "required") {
+        inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
+    } else {
+        inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+    }
+
+    return common_chat_templates_apply(ctx->chat_tmpls.get(), inputs);
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -308,13 +403,13 @@ char * llama_bridge_chat_completion(
     ctx->cancelled.store(false);
 
     // Parse request
-    json req;
-    try {
-        req = json::parse(request_json);
-    } catch (...) {
+    parsed_chat_request parsed_req;
+    std::string parse_error;
+    if (!parse_chat_request(request_json, parsed_req, parse_error)) {
         json err = {{"error", "invalid JSON request"}};
         return json_to_cstr(err);
     }
+    json & req = parsed_req.raw;
 
     // Extract parameters
     float  temperature = req.value("temperature", 0.7f);
@@ -323,7 +418,6 @@ char * llama_bridge_chat_completion(
     float  min_p       = req.value("min_p", 0.0f);
     int    max_tokens  = req.value("max_tokens", 512);
     bool   stream      = req.value("stream", true);
-    bool   enable_thinking = req.value("enable_thinking", false);
 
     // Rebuild sampler with request params
     if (ctx->sampler) { common_sampler_free(ctx->sampler); }
@@ -334,75 +428,7 @@ char * llama_bridge_chat_completion(
     sparams.min_p  = min_p;
     ctx->sampler = common_sampler_init(ctx->model, sparams);
 
-    // Parse messages
-    std::vector<common_chat_msg> messages;
-    if (req.contains("messages") && req["messages"].is_array()) {
-        for (auto & m : req["messages"]) {
-            common_chat_msg msg;
-            msg.role = m.value("role", "user");
-
-            if (m["content"].is_string()) {
-                msg.content = m["content"].get<std::string>();
-            } else if (m["content"].is_array()) {
-                // Multi-modal content parts — only set content_parts, NOT content
-                for (auto & part : m["content"]) {
-                    std::string type = part.value("type", "text");
-                    if (type == "text") {
-                        common_chat_msg_content_part cp;
-                        cp.type = "text";
-                        cp.text = part.value("text", "");
-                        msg.content_parts.push_back(cp);
-                    } else if (type == "image_url") {
-                        common_chat_msg_content_part cp;
-                        cp.type = "image_url";
-                        if (part.contains("image_url")) {
-                            cp.text = part["image_url"].value("url", "");
-                        }
-                        msg.content_parts.push_back(cp);
-                    }
-                }
-            }
-
-            // Tool call results
-            if (m.contains("tool_call_id")) {
-                msg.tool_call_id = m["tool_call_id"].get<std::string>();
-            }
-
-            messages.push_back(msg);
-        }
-    }
-
-    // Parse tools
-    std::vector<common_chat_tool> tools;
-    if (req.contains("tools") && req["tools"].is_array()) {
-        for (auto & t : req["tools"]) {
-            if (t.value("type", "") == "function" && t.contains("function")) {
-                common_chat_tool tool;
-                tool.name        = t["function"].value("name", "");
-                tool.description = t["function"].value("description", "");
-                if (t["function"].contains("parameters")) {
-                    tool.parameters = t["function"]["parameters"].dump();
-                }
-                tools.push_back(tool);
-            }
-        }
-    }
-
-    // Build prompt using chat template
-    common_chat_templates_inputs inputs;
-    inputs.messages             = messages;
-    inputs.tools                = tools;
-    inputs.add_generation_prompt = true;
-    inputs.use_jinja            = true;
-    inputs.enable_thinking      = enable_thinking;
-
-    std::string tool_choice_str = req.value("tool_choice", "auto");
-    if (tool_choice_str == "none")     inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_NONE;
-    else if (tool_choice_str == "required") inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_REQUIRED;
-    else                                    inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
-
-    common_chat_params chat_params = common_chat_templates_apply(
-        ctx->chat_tmpls.get(), inputs);
+    common_chat_params chat_params = build_chat_params(ctx, parsed_req);
 
     std::string prompt = chat_params.prompt;
 
@@ -505,6 +531,11 @@ char * llama_bridge_chat_completion(
         }
 
         ctx->n_past = new_n_past;
+        if (ctx->n_past >= ctx->n_ctx) {
+            mtmd_input_chunks_free(vlm_chunks);
+            json err = {{"error", "prompt exceeds context window"}};
+            return json_to_cstr(err);
+        }
 
         mtmd_input_chunks_free(vlm_chunks);
 
@@ -514,6 +545,10 @@ char * llama_bridge_chat_completion(
         ctx->n_past = 0;
 
         prompt_tokens = common_tokenize(ctx->ctx, prompt, true, true);
+        if ((int32_t)prompt_tokens.size() >= ctx->n_ctx) {
+            json err = {{"error", "prompt exceeds context window"}};
+            return json_to_cstr(err);
+        }
 
         if (decode_batch(ctx->ctx, prompt_tokens, 0, ctx->n_batch, true) != 0) {
             json err = {{"error", "prompt decode failed"}};
@@ -538,6 +573,7 @@ char * llama_bridge_chat_completion(
 
     for (int i = 0; i < max_tokens; i++) {
         if (ctx->cancelled.load()) break;
+        if (ctx->n_past >= llama_n_ctx(ctx->ctx)) break;
 
         llama_token new_token = common_sampler_sample(ctx->sampler, ctx->ctx, -1);
         common_sampler_accept(ctx->sampler, new_token, true);
@@ -566,12 +602,8 @@ char * llama_bridge_chat_completion(
         if (callback && stream) {
             utf8_buffer += piece;
             if (is_valid_utf8(utf8_buffer.c_str())) {
-                bool cont = callback(utf8_buffer.c_str(), user_data);
+                callback(utf8_buffer.c_str(), user_data);
                 utf8_buffer.clear();
-                if (!cont) {
-                    ctx->cancelled.store(true);
-                    break;
-                }
             }
         }
     }
@@ -592,7 +624,7 @@ char * llama_bridge_chat_completion(
     json tool_calls_json = json::array();
     std::string content_text = response_text;
 
-    if (!tools.empty()) {
+    if (!parsed_req.tools.empty()) {
         common_chat_parser_params parser_params(chat_params);
         common_chat_msg parsed = common_chat_parse(response_text, false, parser_params);
 
@@ -622,7 +654,8 @@ char * llama_bridge_chat_completion(
     }
 
     std::string finish_reason = ctx->cancelled.load() ? "stop" :
-        (!tool_calls_json.empty() ? "tool_calls" : "stop");
+        (!tool_calls_json.empty() ? "tool_calls" :
+        ((gen_count >= max_tokens || ctx->n_past >= llama_n_ctx(ctx->ctx)) ? "length" : "stop"));
 
     json response = {
         {"id",      "chatcmpl-local"},
@@ -646,6 +679,26 @@ char * llama_bridge_chat_completion(
 
 void llama_bridge_cancel(llama_bridge_context * ctx) {
     if (ctx) ctx->cancelled.store(true);
+}
+
+int32_t llama_bridge_count_prompt_tokens(
+    llama_bridge_context * ctx,
+    const char * request_json
+) {
+    if (!ctx || !ctx->model || !ctx->ctx || !request_json) {
+        return -1;
+    }
+
+    parsed_chat_request parsed_req;
+    std::string parse_error;
+    if (!parse_chat_request(request_json, parsed_req, parse_error)) {
+        return -1;
+    }
+
+    common_chat_params chat_params = build_chat_params(ctx, parsed_req);
+    std::vector<llama_token> prompt_tokens = common_tokenize(
+        ctx->ctx, chat_params.prompt, true, true);
+    return (int32_t)prompt_tokens.size();
 }
 
 // ---------------------------------------------------------------------------
