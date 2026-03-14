@@ -95,6 +95,7 @@ const _contextWindowTokens = 4096;
 const _responseReserveTokens = 1024;
 const _contextSafetyBufferTokens = 128;
 const _imageTokenReserve = 512;
+const _contextPrepYieldEvery = 4;
 
 // ---------------------------------------------------------------------------
 // Chat Screen
@@ -129,6 +130,13 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<File> _pendingImages = [];
 
   late String _modelsDirPath;
+
+  int get _recommendedThreads {
+    final cores = Platform.numberOfProcessors;
+    if (cores >= 8) return 8;
+    if (cores >= 6) return 6;
+    return cores >= 4 ? cores : 4;
+  }
 
   @override
   void initState() {
@@ -249,10 +257,10 @@ class _ChatScreenState extends State<ChatScreen> {
 
       _model = LlamaModel.load(
         modelPath,
-        params: const ModelParams(
+        params: ModelParams(
           nCtx: _contextWindowTokens,
-          nBatch: 512,
-          nThreads: 4,
+          nBatch: 1024,
+          nThreads: _recommendedThreads,
           flashAttn: true,
         ),
       );
@@ -269,6 +277,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _status =
             'Loaded: ${info['description'] ?? 'unknown'}\n'
             'Ctx: ${info['n_ctx'] ?? _contextWindowTokens} tokens | '
+            'Threads: $_recommendedThreads | '
             'VLM: ${_model!.hasVisionProjector ? 'yes' : 'no'}';
         _isLoading = false;
       });
@@ -379,10 +388,25 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  List<ChatMessage> _buildRollingWindowMessages(ChatMessage currentUserMsg) {
+  Future<void> _yieldForUi() {
+    return Future<void>.delayed(Duration.zero);
+  }
+
+  Future<_ContextPrepResult> _prepareContextWindow(
+    ChatMessage currentUserMsg,
+  ) async {
     final engine = _engine;
     if (engine == null) {
-      return [ChatMessage.system(_systemPrompt), currentUserMsg];
+      final fallbackMessages = [
+        ChatMessage.system(_systemPrompt),
+        currentUserMsg,
+      ];
+      return _ContextPrepResult(
+        messages: fallbackMessages,
+        promptTokens: 0,
+        droppedMessages: 0,
+        maxResponseTokens: 256,
+      );
     }
 
     final history = <ChatMessage>[];
@@ -398,6 +422,18 @@ class _ChatScreenState extends State<ChatScreen> {
         _responseReserveTokens -
         _contextSafetyBufferTokens;
     final selected = <ChatMessage>[currentUserMsg];
+    var droppedMessages = 0;
+
+    if (history.length > _contextPrepYieldEvery) {
+      setState(() {
+        _bubbles.last = const _ChatBubble(
+          role: 'assistant',
+          text: 'Preparing long context...',
+        );
+        _status = 'Preparing long context...';
+      });
+      await _yieldForUi();
+    }
 
     for (int i = history.length - 1; i >= 0; i--) {
       final candidate = <ChatMessage>[systemMessage, history[i], ...selected];
@@ -406,18 +442,37 @@ class _ChatScreenState extends State<ChatScreen> {
       final totalBudgetCost =
           promptTokens + _extraTokenReserveForMessages(candidate);
       if (totalBudgetCost > promptBudget) {
+        droppedMessages++;
+        if ((history.length - i) % _contextPrepYieldEvery == 0) {
+          setState(() {
+            _bubbles.last = _ChatBubble(
+              role: 'assistant',
+              text:
+                  'Preparing long context...\nDropped $droppedMessages older messages so far.',
+            );
+            _status =
+                'Preparing long context... dropped $droppedMessages older messages';
+          });
+          await _yieldForUi();
+        }
         continue;
       }
       selected.insert(0, history[i]);
+      if ((history.length - i) % _contextPrepYieldEvery == 0) {
+        setState(() {
+          _bubbles.last = _ChatBubble(
+            role: 'assistant',
+            text:
+                'Preparing long context...\nKeeping ${selected.length - 1} recent messages.',
+          );
+          _status =
+              'Preparing long context... keeping ${selected.length - 1} recent messages';
+        });
+        await _yieldForUi();
+      }
     }
 
-    return [systemMessage, ...selected];
-  }
-
-  int _computeMaxResponseTokens(List<ChatMessage> messages) {
-    final engine = _engine;
-    if (engine == null) return 256;
-
+    final messages = [systemMessage, ...selected];
     final promptTokens = engine.countPromptTokens(
       ChatCompletionRequest(messages: messages, maxTokens: 1),
     );
@@ -426,7 +481,12 @@ class _ChatScreenState extends State<ChatScreen> {
         promptTokens -
         _extraTokenReserveForMessages(messages) -
         _contextSafetyBufferTokens;
-    return remaining.clamp(64, _responseReserveTokens);
+    return _ContextPrepResult(
+      messages: messages,
+      promptTokens: promptTokens,
+      droppedMessages: droppedMessages,
+      maxResponseTokens: remaining.clamp(64, _responseReserveTokens),
+    );
   }
 
   // -- Send message --
@@ -466,12 +526,27 @@ class _ChatScreenState extends State<ChatScreen> {
         userMsg = ChatMessage.user(text);
       }
 
-      final messages = _buildRollingWindowMessages(userMsg);
-      final promptTokens = _engine!.countPromptTokens(
-        ChatCompletionRequest(messages: messages, maxTokens: 1),
-      );
-      final droppedMessages = (_bubbles.length - 1) - (messages.length - 1);
-      final maxResponseTokens = _computeMaxResponseTokens(messages);
+      final prep = await _prepareContextWindow(userMsg);
+      final messages = prep.messages;
+      final promptTokens = prep.promptTokens;
+      final droppedMessages = prep.droppedMessages;
+      final maxResponseTokens = prep.maxResponseTokens;
+
+      setState(() {
+        _bubbles.last = _ChatBubble(
+          role: 'assistant',
+          text:
+              droppedMessages > 0
+                  ? 'Context ready. Streaming reply...\nTrimmed $droppedMessages older messages to fit the 4k window.'
+                  : 'Context ready. Streaming reply...',
+        );
+        _status =
+            'Loaded: ${_selectedModel.label}\n'
+            'Window: $promptTokens/$_contextWindowTokens prompt tokens, '
+            '$maxResponseTokens reserved for reply'
+            '${droppedMessages > 0 ? ' | dropped $droppedMessages older messages' : ''}';
+      });
+      await _yieldForUi();
 
       final request = ChatCompletionRequest(
         messages: messages,
@@ -484,12 +559,16 @@ class _ChatScreenState extends State<ChatScreen> {
       final streamedBuffer = StringBuffer();
       ChatCompletionResponse? response;
       var lastUiFlush = DateTime.now();
+      var streamedChunks = 0;
 
       await for (final event in stream) {
         if (event is String) {
           streamedBuffer.write(event);
+          streamedChunks++;
           final now = DateTime.now();
-          if (now.difference(lastUiFlush) >= const Duration(milliseconds: 33) ||
+          if (streamedChunks == 1 ||
+              streamedChunks % 8 == 0 ||
+              now.difference(lastUiFlush) >= const Duration(milliseconds: 16) ||
               event.contains('\n')) {
             lastUiFlush = now;
             setState(() {
@@ -839,5 +918,19 @@ class _ChatBubble {
     required this.role,
     required this.text,
     this.imagePaths = const [],
+  });
+}
+
+class _ContextPrepResult {
+  final List<ChatMessage> messages;
+  final int promptTokens;
+  final int droppedMessages;
+  final int maxResponseTokens;
+
+  const _ContextPrepResult({
+    required this.messages,
+    required this.promptTokens,
+    required this.droppedMessages,
+    required this.maxResponseTokens,
   });
 }

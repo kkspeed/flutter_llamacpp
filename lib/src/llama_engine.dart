@@ -12,55 +12,35 @@ import 'llama_model.dart';
 final class _StreamWorkerArgs {
   final SendPort sendPort;
   final int handleAddress;
+  final int callbackAddress;
   final String requestJson;
 
   const _StreamWorkerArgs({
     required this.sendPort,
     required this.handleAddress,
+    required this.callbackAddress,
     required this.requestJson,
   });
-}
-
-final class _StreamTokenEvent {
-  final String token;
-
-  const _StreamTokenEvent(this.token);
-}
-
-final class _StreamDoneEvent {
-  final String responseJson;
-
-  const _StreamDoneEvent(this.responseJson);
-}
-
-final class _StreamErrorEvent {
-  final String error;
-
-  const _StreamErrorEvent(this.error);
 }
 
 void _chatCompletionStreamWorker(_StreamWorkerArgs args) {
   final bindings = LlamaBindings.instance();
   final handle = Pointer<Void>.fromAddress(args.handleAddress);
-  final callback = NativeCallable<TokenCallbackNative>.listener((
-    Pointer<Utf8> token,
-    Pointer<Void> userData,
-  ) {
-    args.sendPort.send(_StreamTokenEvent(token.toDartString()));
-  });
+  final callback = Pointer<NativeFunction<TokenCallbackNative>>.fromAddress(
+    args.callbackAddress,
+  );
 
   try {
     final responseJson = bindings.chatCompletion(
       handle,
       args.requestJson,
-      callback.nativeFunction,
+      callback,
       nullptr,
     );
-    args.sendPort.send(_StreamDoneEvent(responseJson));
+    args.sendPort.send({'type': 'done', 'responseJson': responseJson});
   } catch (error) {
-    args.sendPort.send(_StreamErrorEvent(error.toString()));
+    args.sendPort.send({'type': 'error', 'error': error.toString()});
   } finally {
-    callback.close();
     Isolate.exit();
   }
 }
@@ -130,16 +110,29 @@ class LlamaEngine {
     final requestJson = jsonEncode(request.toJson());
     final receivePort = ReceivePort();
     late final StreamSubscription<dynamic> subscription;
+    late final NativeCallable<TokenCallbackNative> callback;
+    var callbackClosed = false;
+
+    void closeCallback() {
+      if (callbackClosed) return;
+      callbackClosed = true;
+      callback.close();
+    }
+
+    callback = NativeCallable<TokenCallbackNative>.listener((
+      Pointer<Utf8> token,
+      Pointer<Void> userData,
+    ) {
+      if (!controller.isClosed) {
+        controller.add(token.toDartString());
+      }
+    });
 
     subscription = receivePort.listen((message) {
-      if (message is _StreamTokenEvent) {
-        controller.add(message.token);
-        return;
-      }
-
-      if (message is _StreamDoneEvent) {
+      if (message is Map && message['type'] == 'done') {
         final responseMap =
-            jsonDecode(message.responseJson) as Map<String, dynamic>;
+            jsonDecode(message['responseJson'] as String)
+                as Map<String, dynamic>;
         if (responseMap.containsKey('error')) {
           controller.addError(
             Exception('Chat completion error: ${responseMap['error']}'),
@@ -149,14 +142,16 @@ class LlamaEngine {
         }
         subscription.cancel();
         receivePort.close();
+        closeCallback();
         controller.close();
         return;
       }
 
-      if (message is _StreamErrorEvent) {
-        controller.addError(Exception(message.error));
+      if (message is Map && message['type'] == 'error') {
+        controller.addError(Exception(message['error'] as String));
         subscription.cancel();
         receivePort.close();
+        closeCallback();
         controller.close();
       }
     });
@@ -168,12 +163,14 @@ class LlamaEngine {
           _StreamWorkerArgs(
             sendPort: receivePort.sendPort,
             handleAddress: _model.handle.address,
+            callbackAddress: callback.nativeFunction.address,
             requestJson: requestJson,
           ),
         );
       } catch (error) {
         await subscription.cancel();
         receivePort.close();
+        closeCallback();
         controller.addError(error);
         await controller.close();
       }

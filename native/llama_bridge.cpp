@@ -17,6 +17,7 @@
 #include <mutex>
 #include <chrono>
 #include <algorithm>
+#include <thread>
 
 #if defined(__ANDROID__)
 #include <android/log.h>
@@ -251,6 +252,11 @@ llama_bridge_context * llama_bridge_load_model(
         }
     }
 
+    if (n_threads <= 0) {
+        const auto hw_threads = std::thread::hardware_concurrency();
+        n_threads = hw_threads > 0 ? (int32_t) hw_threads : 4;
+    }
+
     bctx->n_ctx    = n_ctx;
     bctx->n_batch  = n_batch;
     bctx->n_threads = n_threads;
@@ -384,6 +390,72 @@ static int decode_batch(
     return 0;
 }
 
+static int shift_context_window(
+    llama_bridge_context * ctx,
+    int32_t n_keep,
+    int32_t incoming_tokens
+) {
+    if (ctx->n_past + incoming_tokens < ctx->n_ctx) {
+        return 0;
+    }
+
+    llama_memory_t mem = llama_get_memory(ctx->ctx);
+    if (!llama_memory_can_shift(mem)) {
+        return -1;
+    }
+
+    while (ctx->n_past + incoming_tokens >= ctx->n_ctx) {
+        const int32_t keep = std::min<int32_t>(n_keep, ctx->n_past);
+        const int32_t n_left = ctx->n_past - keep;
+        if (n_left <= 0) {
+            return -1;
+        }
+
+        const int32_t n_discard = std::max<int32_t>(1, n_left / 2);
+        LOGI("llama_bridge: shifting context (n_past=%d, keep=%d, discard=%d)\n",
+             (int32_t)ctx->n_past, keep, n_discard);
+
+        llama_memory_seq_rm (mem, 0, keep,             keep + n_discard);
+        llama_memory_seq_add(mem, 0, keep + n_discard, ctx->n_past, -n_discard);
+
+        ctx->n_past -= n_discard;
+    }
+
+    return 0;
+}
+
+static int decode_prompt_with_rolling_window(
+    llama_bridge_context * ctx,
+    const std::vector<llama_token> & tokens,
+    int32_t n_keep
+) {
+    llama_batch batch = llama_batch_init(ctx->n_batch, 0, 1);
+
+    for (int i = 0; i < (int)tokens.size(); i += ctx->n_batch) {
+        int cur = std::min((int)tokens.size() - i, ctx->n_batch);
+        if (shift_context_window(ctx, n_keep, cur) != 0) {
+            llama_batch_free(batch);
+            return -1;
+        }
+
+        common_batch_clear(batch);
+        for (int j = 0; j < cur; j++) {
+            bool logit = (i + j == (int)tokens.size() - 1);
+            common_batch_add(batch, tokens[i + j], ctx->n_past + j, {0}, logit);
+        }
+
+        if (llama_decode(ctx->ctx, batch) != 0) {
+            llama_batch_free(batch);
+            return -1;
+        }
+
+        ctx->n_past += cur;
+    }
+
+    llama_batch_free(batch);
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Chat completion
 // ---------------------------------------------------------------------------
@@ -460,6 +532,7 @@ char * llama_bridge_chat_completion(
 
     std::vector<llama_token> prompt_tokens;
     mtmd_input_chunks * vlm_chunks = nullptr;
+    int32_t n_keep = 0;
 
     if (use_vlm) {
         // Use mtmd tokenizer with image markers
@@ -545,16 +618,14 @@ char * llama_bridge_chat_completion(
         ctx->n_past = 0;
 
         prompt_tokens = common_tokenize(ctx->ctx, prompt, true, true);
-        if ((int32_t)prompt_tokens.size() >= ctx->n_ctx) {
-            json err = {{"error", "prompt exceeds context window"}};
-            return json_to_cstr(err);
-        }
+        n_keep = std::min<int32_t>(
+            std::min<int32_t>((int32_t)prompt_tokens.size(), 256),
+            std::max<int32_t>(1, ctx->n_ctx / 8));
 
-        if (decode_batch(ctx->ctx, prompt_tokens, 0, ctx->n_batch, true) != 0) {
+        if (decode_prompt_with_rolling_window(ctx, prompt_tokens, n_keep) != 0) {
             json err = {{"error", "prompt decode failed"}};
             return json_to_cstr(err);
         }
-        ctx->n_past = (llama_pos)prompt_tokens.size();
     }
 
     auto t_prompt_end = std::chrono::high_resolution_clock::now();
@@ -573,7 +644,8 @@ char * llama_bridge_chat_completion(
 
     for (int i = 0; i < max_tokens; i++) {
         if (ctx->cancelled.load()) break;
-        if (ctx->n_past >= llama_n_ctx(ctx->ctx)) break;
+        if (!use_vlm && shift_context_window(ctx, n_keep, 1) != 0) break;
+        if (use_vlm && ctx->n_past >= llama_n_ctx(ctx->ctx)) break;
 
         llama_token new_token = common_sampler_sample(ctx->sampler, ctx->ctx, -1);
         common_sampler_accept(ctx->sampler, new_token, true);
