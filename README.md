@@ -9,7 +9,7 @@ A Flutter plugin wrapping [llama.cpp](https://github.com/ggerganov/llama.cpp) fo
 - **Tool calling** — Function calling with automatic parsing via llama.cpp's built-in PEG parser
 - **Streaming** — Token-by-token generation with cancel support
 - **Platform optimized**:
-  - **Android**: CPU (with all variants) + OpenCL GPU (Adreno-optimized)
+  - **Android**: CPU by default, optional Vulkan GPU backend
   - **iOS**: CPU + Metal GPU (embedded shaders)
 - **Dart FFI** — Direct native binding, no platform channels overhead
 - **Tested with**: Qwen 3.5 0.8B Q4 (native multi-modal with gated attention)
@@ -111,6 +111,43 @@ flutter_llamacpp/
 - Android NDK (for Android builds)
 - Xcode (for iOS builds)
 - CMake ≥ 3.14
+
+## Android Vulkan
+
+Android builds now try to enable Vulkan automatically when a usable `glslc`
+is found. The Android NDK already ships `glslc`, and the build checks the
+active NDK under `shader-tools/<host>/glslc` first. You only need to set a
+custom `glslc` path if you want to override that default.
+
+You can override detection in `android/gradle.properties` or
+`example/android/gradle.properties`:
+
+```bash
+flutterLlamacppEnableVulkan=true
+flutterLlamacppGlslc=/absolute/path/to/glslc
+```
+
+or environment variables:
+
+```bash
+export FLUTTER_LLAMACPP_ENABLE_VULKAN=true
+export VULKAN_GLSLC_EXECUTABLE=/absolute/path/to/glslc
+flutter run --release
+```
+
+If `VULKAN_SDK` is set, the Android build will also look for `glslc` under
+`$VULKAN_SDK/bin/glslc`.
+
+Detection order for `glslc` is:
+1. `flutterLlamacppGlslc`
+2. `VULKAN_GLSLC_EXECUTABLE`
+3. Android NDK `shader-tools/<host>/glslc`
+4. `VULKAN_SDK/bin/glslc`
+
+Build behavior is:
+1. If `flutterLlamacppEnableVulkan` or `FLUTTER_LLAMACPP_ENABLE_VULKAN` is set, that value wins.
+2. Otherwise Vulkan is enabled automatically when `glslc` is found.
+3. If no usable `glslc` path is found, the plugin falls back to the CPU backend.
 
 ## Models
 

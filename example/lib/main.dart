@@ -96,6 +96,19 @@ const _responseReserveTokens = 1024;
 const _contextSafetyBufferTokens = 128;
 const _imageTokenReserve = 512;
 const _contextPrepYieldEvery = 4;
+const _benchmarkPrompt =
+    'Write a concise summary of why local LLM inference on phones can favor CPU over GPU for small quantized models.';
+const _benchmarkMaxTokens = 96;
+
+enum _BackendMode {
+  cpu('CPU', 0),
+  vulkan('Vulkan', 99);
+
+  const _BackendMode(this.label, this.nGpuLayers);
+
+  final String label;
+  final int nGpuLayers;
+}
 
 // ---------------------------------------------------------------------------
 // Chat Screen
@@ -122,9 +135,11 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isGenerating = false;
   double _downloadProgress = 0;
   PerformanceStats? _lastPerf;
+  String? _lastBenchmarkSummary;
 
   // Model selection
   _ModelConfig _selectedModel = _availableModels[0];
+  _BackendMode _selectedBackend = _BackendMode.cpu;
 
   // Attached images for the next message
   final List<File> _pendingImages = [];
@@ -262,6 +277,7 @@ class _ChatScreenState extends State<ChatScreen> {
           nBatch: 1024,
           nThreads: _recommendedThreads,
           flashAttn: true,
+          nGpuLayers: _selectedBackend.nGpuLayers,
         ),
       );
 
@@ -277,6 +293,7 @@ class _ChatScreenState extends State<ChatScreen> {
         _status =
             'Loaded: ${info['description'] ?? 'unknown'}\n'
             'Ctx: ${info['n_ctx'] ?? _contextWindowTokens} tokens | '
+            'Backend: ${_selectedBackend.label} | '
             'Threads: $_recommendedThreads | '
             'VLM: ${_model!.hasVisionProjector ? 'yes' : 'no'}';
         _isLoading = false;
@@ -284,6 +301,62 @@ class _ChatScreenState extends State<ChatScreen> {
     } catch (e) {
       setState(() {
         _status = 'Load failed: $e';
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _runBenchmark() async {
+    final engine = _engine;
+    if (engine == null || _isGenerating || _isLoading) return;
+
+    setState(() {
+      _isLoading = true;
+      _lastBenchmarkSummary = null;
+      _status = 'Running benchmark on ${_selectedBackend.label}...';
+    });
+
+    final stopwatch = Stopwatch()..start();
+
+    try {
+      engine.clearContext();
+      final request = ChatCompletionRequest(
+        messages: [
+          ChatMessage.system(_systemPrompt),
+          ChatMessage.user(_benchmarkPrompt),
+        ],
+        temperature: 0.0,
+        maxTokens: _benchmarkMaxTokens,
+      );
+
+      final response = await engine.chatCompletion(request);
+      stopwatch.stop();
+      final perf = engine.lastPerf;
+      final completionTokens = response.usage.completionTokens;
+      final summary =
+          '${_selectedBackend.label}: '
+          'prompt ${perf.promptTokensPerSec.toStringAsFixed(1)} t/s, '
+          'gen ${perf.genTokensPerSec.toStringAsFixed(1)} t/s, '
+          'first run ${stopwatch.elapsedMilliseconds} ms, '
+          '$completionTokens output tokens';
+
+      setState(() {
+        _lastPerf = perf;
+        _lastBenchmarkSummary = summary;
+        _status =
+            'Loaded: ${_selectedModel.label}\n'
+            'Backend: ${_selectedBackend.label} | '
+            'Benchmark complete';
+      });
+    } catch (e) {
+      stopwatch.stop();
+      setState(() {
+        _lastBenchmarkSummary =
+            'Benchmark failed on ${_selectedBackend.label}: $e';
+        _status = 'Benchmark failed: $e';
+      });
+    } finally {
+      setState(() {
         _isLoading = false;
       });
     }
@@ -653,6 +726,12 @@ class _ChatScreenState extends State<ChatScreen> {
               tooltip: 'Load model',
               onPressed: _loadModel,
             ),
+          if (_model != null && !_isLoading && !_isGenerating)
+            IconButton(
+              icon: const Icon(Icons.speed),
+              tooltip: 'Run benchmark',
+              onPressed: _runBenchmark,
+            ),
           if (_isGenerating)
             IconButton(
               icon: const Icon(Icons.stop),
@@ -699,6 +778,32 @@ class _ChatScreenState extends State<ChatScreen> {
                       },
                     ),
                   ),
+                if (_model == null && !_isLoading)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: DropdownButton<_BackendMode>(
+                      value: _selectedBackend,
+                      isExpanded: true,
+                      isDense: true,
+                      dropdownColor:
+                          Theme.of(context).colorScheme.surfaceContainerHighest,
+                      items:
+                          _BackendMode.values.map((backend) {
+                            return DropdownMenuItem(
+                              value: backend,
+                              child: Text(
+                                'Backend: ${backend.label}',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            );
+                          }).toList(),
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => _selectedBackend = value);
+                        }
+                      },
+                    ),
+                  ),
                 Text(_status, style: Theme.of(context).textTheme.bodySmall),
                 if (_isLoading && _downloadProgress > 0)
                   Padding(
@@ -717,6 +822,16 @@ class _ChatScreenState extends State<ChatScreen> {
                       '⚡ ${_lastPerf!}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: Colors.greenAccent,
+                      ),
+                    ),
+                  ),
+                if (_lastBenchmarkSummary != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      _lastBenchmarkSummary!,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.amberAccent,
                       ),
                     ),
                   ),

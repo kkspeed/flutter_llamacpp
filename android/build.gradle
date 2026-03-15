@@ -2,6 +2,84 @@ plugins {
     id 'com.android.library'
 }
 
+def vulkanPreference = project.findProperty('flutterLlamacppEnableVulkan')?.toString()
+if (vulkanPreference == null) {
+    vulkanPreference = System.getenv('FLUTTER_LLAMACPP_ENABLE_VULKAN')
+}
+
+def vulkanGlslc = project.findProperty('flutterLlamacppGlslc')?.toString()
+def vulkanIncludeDir = project.findProperty('flutterLlamacppVulkanIncludeDir')?.toString()
+def vendoredVulkanHeaders = new File(project.projectDir.parentFile, 'Vulkan-Header/include')
+if (!vulkanGlslc) {
+    vulkanGlslc = System.getenv('VULKAN_GLSLC_EXECUTABLE')
+}
+if (!vulkanIncludeDir) {
+    vulkanIncludeDir = System.getenv('VULKAN_INCLUDE_DIR')
+}
+if (!vulkanIncludeDir && new File(vendoredVulkanHeaders, 'vulkan/vulkan.hpp').exists()) {
+    vulkanIncludeDir = vendoredVulkanHeaders.absolutePath
+}
+if (!vulkanGlslc) {
+    def ndkRoot = null
+    if (android.hasProperty('ndkDirectory') && android.ndkDirectory != null) {
+        ndkRoot = android.ndkDirectory.absolutePath
+    }
+    if (!ndkRoot) {
+        ndkRoot = System.getenv('ANDROID_NDK')
+    }
+    if (!ndkRoot) {
+        ndkRoot = System.getenv('ANDROID_NDK_HOME')
+    }
+    if (!ndkRoot) {
+        ndkRoot = System.getenv('ANDROID_NDK_ROOT')
+    }
+    if (ndkRoot) {
+        def osTag = null
+        def osName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+        def archName = System.getProperty('os.arch').toLowerCase(Locale.ROOT)
+        if (osName.contains('mac')) {
+            osTag = archName.contains('aarch64') || archName.contains('arm64')
+                    ? 'darwin-arm64'
+                    : 'darwin-x86_64'
+        } else if (osName.contains('linux')) {
+            osTag = 'linux-x86_64'
+        } else if (osName.contains('windows')) {
+            osTag = 'windows-x86_64'
+        }
+        if (osTag) {
+            def candidate = new File(ndkRoot, "shader-tools/${osTag}/glslc")
+            if (candidate.exists()) {
+                vulkanGlslc = candidate.absolutePath
+            }
+        }
+    }
+}
+if (!vulkanGlslc) {
+    def vulkanSdk = System.getenv('VULKAN_SDK')
+    if (vulkanSdk) {
+        def candidate = new File(vulkanSdk, "bin/glslc")
+        if (candidate.exists()) {
+            vulkanGlslc = candidate.absolutePath
+        }
+    }
+}
+if (!vulkanIncludeDir) {
+    def vulkanSdk = System.getenv('VULKAN_SDK')
+    if (vulkanSdk) {
+        def candidate = new File(vulkanSdk, "include")
+        if (new File(candidate, "vulkan/vulkan.hpp").exists()) {
+            vulkanIncludeDir = candidate.absolutePath
+        }
+    }
+}
+
+def vulkanEnabled = false
+if (vulkanPreference != null) {
+    vulkanEnabled = vulkanPreference.toBoolean()
+} else {
+    vulkanEnabled = vulkanGlslc != null && vulkanIncludeDir != null
+}
+
 android {
     namespace 'com.example.flutter_llamacpp'
     compileSdk 35
@@ -18,18 +96,28 @@ android {
         externalNativeBuild {
             cmake {
                 arguments '-DCMAKE_BUILD_TYPE=Release',
-                          '-DCMAKE_VERBOSE_MAKEFILE=ON',
-                          '-DBUILD_SHARED_LIBS=ON',
-                          '-DLLAMA_BUILD_COMMON=ON',
-                          '-DLLAMA_OPENSSL=OFF',
-                          // CPU backend
-                          '-DGGML_NATIVE=OFF',
-                          '-DGGML_BACKEND_DL=OFF',
-                          '-DGGML_CPU_ALL_VARIANTS=OFF',
-                          '-DGGML_CPU_KLEIDIAI=OFF',
-                          // OpenCL disabled for now (NDK lacks headers)
-                          // TODO: vendor Khronos OpenCL headers to enable GPU
-                          '-DGGML_OPENCL=OFF'
+                        '-DCMAKE_VERBOSE_MAKEFILE=ON',
+                        '-DBUILD_SHARED_LIBS=ON',
+                        '-DLLAMA_BUILD_COMMON=ON',
+                        '-DLLAMA_OPENSSL=OFF',
+                        // CPU backend
+                        '-DGGML_NATIVE=OFF',
+                        '-DGGML_BACKEND_DL=OFF',
+                        '-DGGML_CPU_ALL_VARIANTS=OFF',
+                        '-DGGML_CPU_KLEIDIAI=OFF',
+                        // OpenCL disabled for now (NDK lacks headers)
+                        // TODO: vendor Khronos OpenCL headers to enable GPU
+                        '-DGGML_OPENCL=OFF'
+
+                if (vulkanEnabled && vulkanGlslc) {
+                    arguments '-DGGML_VULKAN=ON',
+                            "-DVulkan_GLSLC_EXECUTABLE=${vulkanGlslc}"
+                    if (vulkanIncludeDir) {
+                        arguments "-DVulkan_INCLUDE_DIR=${vulkanIncludeDir}"
+                    }
+                } else {
+                    arguments '-DGGML_VULKAN=OFF'
+                }
             }
         }
     }

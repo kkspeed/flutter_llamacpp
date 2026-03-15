@@ -1,3 +1,6 @@
 [submodule "llama.cpp"]
 	path = llama.cpp
 	url = ./llama.cpp/
+[submodule "Vulkan-Header"]
+	path = Vulkan-Header
+	url = https://github.com/KhronosGroup/Vulkan-Headers.git
