@@ -8,6 +8,7 @@
 #include "mtmd-helper.h"
 
 #include <atomic>
+#include <cerrno>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +22,9 @@
 
 #if defined(__ANDROID__)
 #include <android/log.h>
+#include <dirent.h>
+#include <dlfcn.h>
+#include <libgen.h>
 #define LOG_TAG "llama_bridge"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
@@ -76,6 +80,91 @@ static char * strdup_c(const std::string & s) {
 static char * json_to_cstr(const json & j) {
     return strdup_c(j.dump());
 }
+
+#if defined(__ANDROID__)
+static bool has_prefix(const std::string & s, const char * prefix) {
+    return s.rfind(prefix, 0) == 0;
+}
+
+static bool has_suffix(const std::string & s, const char * suffix) {
+    const size_t suffix_len = std::strlen(suffix);
+    return s.size() >= suffix_len && s.compare(s.size() - suffix_len, suffix_len, suffix) == 0;
+}
+
+static bool is_dynamic_backend_library(const std::string & name) {
+    if (!has_prefix(name, "libggml-") || !has_suffix(name, ".so")) {
+        return false;
+    }
+    return name != "libggml.so" && name != "libggml-base.so";
+}
+
+static const char * const kKnownAndroidBackendSonames[] = {
+    "libggml-vulkan.so",
+    "libggml-cpu-android_armv9.2_2.so",
+    "libggml-cpu-android_armv9.2_1.so",
+    "libggml-cpu-android_armv9.0_1.so",
+    "libggml-cpu-android_armv8.6_1.so",
+    "libggml-cpu-android_armv8.2_2.so",
+    "libggml-cpu-android_armv8.2_1.so",
+    "libggml-cpu-android_armv8.0_1.so",
+    "libggml-cpu.so",
+};
+
+static void try_load_android_backend(const char * name_or_path) {
+    LOGI("Attempting backend load: %s\n", name_or_path);
+    if (ggml_backend_load(name_or_path) != nullptr) {
+        LOGI("Loaded backend: %s\n", name_or_path);
+    } else {
+        LOGW("Backend load failed: %s\n", name_or_path);
+    }
+}
+
+static void load_android_backends_from_dir(const char * backend_dir) {
+    if (!backend_dir || !backend_dir[0]) {
+        return;
+    }
+
+    DIR * dir = opendir(backend_dir);
+    if (!dir) {
+        LOGE("Failed to open backend dir %s: %s\n", backend_dir, std::strerror(errno));
+        return;
+    }
+
+    std::vector<std::string> entries;
+    std::vector<std::string> candidates;
+    while (dirent * entry = readdir(dir)) {
+        std::string name(entry->d_name);
+        entries.push_back(name);
+        if (is_dynamic_backend_library(name)) {
+            candidates.push_back(name);
+        }
+    }
+    closedir(dir);
+
+    std::sort(entries.begin(), entries.end());
+    std::sort(candidates.begin(), candidates.end());
+
+    for (const auto & entry : entries) {
+        LOGI("Native lib dir entry: %s\n", entry.c_str());
+    }
+
+    if (candidates.empty()) {
+        LOGW("No backend libraries visible via directory listing; trying known sonames\n");
+        for (const char * soname : kKnownAndroidBackendSonames) {
+            try_load_android_backend(soname);
+        }
+        return;
+    }
+
+    for (const auto & candidate : candidates) {
+        const std::string full_path = std::string(backend_dir) + "/" + candidate;
+        try_load_android_backend(full_path.c_str());
+        if (ggml_backend_reg_count() == 0) {
+            try_load_android_backend(candidate.c_str());
+        }
+    }
+}
+#endif
 
 static bool is_valid_utf8(const char * s) {
     if (!s) return true;
@@ -206,13 +295,34 @@ void llama_bridge_init(const char * backend_path) {
     }, nullptr);
 #endif
 
-    // Load dynamic backends if path is given
+    // Load dynamic backends if path is given.
+    // On Android, infer the native library directory from libllama_bridge.so
+    // so runtime CPU backend variants are available without extra Dart setup.
     if (backend_path && backend_path[0]) {
         LOGI("Loading backends from: %s\n", backend_path);
+#if defined(__ANDROID__)
+        load_android_backends_from_dir(backend_path);
+#else
         ggml_backend_load_all_from_path(backend_path);
+#endif
+#if defined(__ANDROID__)
+    } else {
+        Dl_info info {};
+        if (dladdr((void *) &llama_bridge_init, &info) != 0 && info.dli_fname != nullptr) {
+            std::string so_path(info.dli_fname);
+            std::vector<char> dir_buf(so_path.begin(), so_path.end());
+            dir_buf.push_back('\0');
+            char * so_dir = dirname(dir_buf.data());
+            if (so_dir && so_dir[0]) {
+                LOGI("Loading backends from inferred path: %s\n", so_dir);
+                load_android_backends_from_dir(so_dir);
+            }
+        }
+#endif
     }
 
     llama_backend_init();
+    LOGI("llama_bridge: backend registry count = %zu\n", ggml_backend_reg_count());
     LOGI("llama_bridge: backend initialized\n");
 }
 

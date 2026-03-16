@@ -21,6 +21,11 @@ endif()
 # ---------------------------------------------------------------------------
 if(DEFINED ANDROID_ABI)
     message(STATUS "llama_bridge: Android ABI = ${ANDROID_ABI}")
+    if(ANDROID_ABI STREQUAL "arm64-v8a")
+        set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
+    else()
+        set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

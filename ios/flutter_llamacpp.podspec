@@ -22,8 +22,9 @@ chat/completion API with multi-modal and tool calling support.
   s.platform = :ios, '16.0'
 
   # Build llama.cpp natively via CMake at pod install time
-  llama_cpp_dir = File.expand_path('../../llama.cpp', __dir__)
-  native_dir    = File.expand_path('../../native', __dir__)
+  plugin_ios_dir = File.realpath(__dir__)
+  llama_cpp_dir  = File.expand_path('../llama.cpp', plugin_ios_dir)
+  native_dir     = File.expand_path('../native', plugin_ios_dir)
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
@@ -41,29 +42,25 @@ chat/completion API with multi-modal and tool calling support.
   # Build llama.cpp + bridge via CMake script phase
   s.script_phase = {
     :name => 'Build llama_bridge via CMake',
-    :script => <<-SCRIPT
+    :script => <<-SCRIPT,
       set -e
       BUILD_DIR="${PODS_TARGET_SRCROOT}/build-ios"
       NATIVE_DIR="#{native_dir}"
 
-      CMAKE_ARGS=(
-        -DCMAKE_BUILD_TYPE=Release
-        -DBUILD_SHARED_LIBS=OFF
-        -DLLAMA_BUILD_COMMON=ON
-        -DLLAMA_OPENSSL=OFF
-        -DGGML_METAL=ON
-        -DGGML_METAL_EMBED_LIBRARY=ON
-        -DGGML_NATIVE=OFF
-        -DGGML_OPENMP=OFF
-        -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0
-        -DCMAKE_SYSTEM_NAME=iOS
+      cmake -B "${BUILD_DIR}" -S "${NATIVE_DIR}" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DLLAMA_BUILD_COMMON=ON \
+        -DLLAMA_OPENSSL=OFF \
+        -DGGML_METAL=ON \
+        -DGGML_METAL_EMBED_LIBRARY=ON \
+        -DGGML_NATIVE=OFF \
+        -DGGML_OPENMP=OFF \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+        -DCMAKE_SYSTEM_NAME=iOS \
         -DCMAKE_OSX_ARCHITECTURES=arm64
-      )
-
-      cmake -B "${BUILD_DIR}" -S "${NATIVE_DIR}" "${CMAKE_ARGS[@]}"
       cmake --build "${BUILD_DIR}" --config Release -j$(sysctl -n hw.ncpu)
     SCRIPT
-    ,
     :execution_position => :before_compile,
   }
 

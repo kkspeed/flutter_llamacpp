@@ -10,6 +10,7 @@ if (vulkanPreference == null) {
 def vulkanGlslc = project.findProperty('flutterLlamacppGlslc')?.toString()
 def vulkanIncludeDir = project.findProperty('flutterLlamacppVulkanIncludeDir')?.toString()
 def vendoredVulkanHeaders = new File(project.projectDir.parentFile, 'Vulkan-Header/include')
+def vendoredKleidiaiDir = new File(project.projectDir.parentFile, 'KleidiAI')
 if (!vulkanGlslc) {
     vulkanGlslc = System.getenv('VULKAN_GLSLC_EXECUTABLE')
 }
@@ -84,7 +85,7 @@ android {
     namespace 'com.example.flutter_llamacpp'
     compileSdk 35
 
-    ndkVersion "27.0.12077973"
+    ndkVersion "29.0.14206865"
 
     defaultConfig {
         minSdk 26
@@ -102,12 +103,15 @@ android {
                         '-DLLAMA_OPENSSL=OFF',
                         // CPU backend
                         '-DGGML_NATIVE=OFF',
-                        '-DGGML_BACKEND_DL=OFF',
-                        '-DGGML_CPU_ALL_VARIANTS=OFF',
-                        '-DGGML_CPU_KLEIDIAI=OFF',
+                        '-DGGML_BACKEND_DL=ON',
+                        '-DGGML_CPU_ALL_VARIANTS=ON',
                         // OpenCL disabled for now (NDK lacks headers)
                         // TODO: vendor Khronos OpenCL headers to enable GPU
                         '-DGGML_OPENCL=OFF'
+
+                if (new File(vendoredKleidiaiDir, 'CMakeLists.txt').exists()) {
+                    arguments "-DGGML_KLEIDIAI_DIR=${vendoredKleidiaiDir.absolutePath}"
+                }
 
                 if (vulkanEnabled && vulkanGlslc) {
                     arguments '-DGGML_VULKAN=ON',

@@ -4,3 +4,6 @@
 [submodule "Vulkan-Header"]
 	path = Vulkan-Header
 	url = https://github.com/KhronosGroup/Vulkan-Headers.git
+[submodule "KleidiAI"]
+	path = KleidiAI
+	url = https://github.com/ARM-software/kleidiai.git

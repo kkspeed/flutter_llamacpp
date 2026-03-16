@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:http/http.dart' as http;
 import 'package:file_picker/file_picker.dart';
@@ -71,6 +72,15 @@ const _availableModels = [
     modelFilename: 'SmolLM-135M.Q4_K_M.gguf',
   ),
   _ModelConfig(
+    label: 'Qwen 3.5 0.8B (Q4_0)',
+    modelUrl:
+        'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_0.gguf?download=true',
+    mmprojUrl:
+        'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/mmproj-F16.gguf',
+    modelFilename: 'Qwen3.5-0.8B-Q4_0.gguf',
+    mmprojFilename: 'mmproj-0.8B-F16.gguf',
+  ),
+  _ModelConfig(
     label: 'Qwen 3.5 0.8B (Q4_K_S)',
     modelUrl:
         'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_K_S.gguf',
@@ -78,6 +88,15 @@ const _availableModels = [
         'https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/mmproj-F16.gguf',
     modelFilename: 'Qwen3.5-0.8B-Q4_K_S.gguf',
     mmprojFilename: 'mmproj-0.8B-F16.gguf',
+  ),
+  _ModelConfig(
+    label: 'Qwen3 VL 2B Instruct (Q4_0)',
+    modelUrl:
+        'https://huggingface.co/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3-VL-2B-Instruct-Q4_0.gguf',
+    mmprojUrl:
+        'https://huggingface.co/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-BF16.gguf',
+    modelFilename: 'Qwen3-VL-2B-Instruct-Q4_0.gguf',
+    mmprojFilename: 'mmproj-Qwen3-VL-2B-BF16.gguf',
   ),
   _ModelConfig(
     label: 'Qwen 3.5 4B (Q4_K_M)',
@@ -122,6 +141,10 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const _platformChannel = MethodChannel(
+    'flutter_llamacpp_example/platform',
+  );
+
   final TextEditingController _inputController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<_ChatBubble> _bubbles = [];
@@ -145,6 +168,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<File> _pendingImages = [];
 
   late String _modelsDirPath;
+  String? _backendPath;
 
   int get _recommendedThreads {
     final cores = Platform.numberOfProcessors;
@@ -163,7 +187,20 @@ class _ChatScreenState extends State<ChatScreen> {
     final appDir = await getApplicationDocumentsDirectory();
     _modelsDirPath = '${appDir.path}/models';
     await Directory(_modelsDirPath).create(recursive: true);
+    _backendPath = await _resolveBackendPath();
     _checkExistingModels();
+  }
+
+  Future<String?> _resolveBackendPath() async {
+    if (!Platform.isAndroid) {
+      return null;
+    }
+
+    try {
+      return await _platformChannel.invokeMethod<String>('getNativeLibraryDir');
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _checkExistingModels() async {
@@ -265,7 +302,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     try {
-      LlamaModel.initBackend();
+      LlamaModel.initBackend(backendPath: _backendPath);
       _backendInitialized = true;
 
       setState(() => _status = 'Loading model...');
