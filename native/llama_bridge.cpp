@@ -68,6 +68,61 @@ struct llama_bridge_context {
     int32_t                       n_threads   = 4;
 };
 
+static llama_model * load_model_with_gpu_fallback(
+    const char * model_path,
+    llama_model_params model_params,
+    bool fallback_to_cpu
+) {
+    llama_model * model = llama_model_load_from_file(model_path, model_params);
+    if (model || !fallback_to_cpu || model_params.n_gpu_layers == 0) {
+        return model;
+    }
+
+    LOGW("llama_bridge: GPU-backed model load failed, retrying on CPU\n");
+    model_params.n_gpu_layers = 0;
+    return llama_model_load_from_file(model_path, model_params);
+}
+
+static llama_context * init_context_with_gpu_fallback(
+    llama_model ** model,
+    llama_context_params ctx_params,
+    const char * model_path,
+    int32_t n_gpu_layers,
+    bool fallback_to_cpu
+) {
+    if (!model || !*model) {
+        return nullptr;
+    }
+
+    llama_context * ctx = llama_init_from_model(*model, ctx_params);
+    if (ctx || !fallback_to_cpu || n_gpu_layers == 0 || !model_path) {
+        return ctx;
+    }
+
+    LOGW("llama_bridge: GPU-backed context init failed, retrying with CPU-only model\n");
+    llama_model_free(*model);
+    *model = nullptr;
+
+    llama_model_params cpu_model_params = llama_model_default_params();
+    cpu_model_params.n_gpu_layers = 0;
+
+    llama_model * cpu_model = llama_model_load_from_file(model_path, cpu_model_params);
+    if (!cpu_model) {
+        LOGE("llama_bridge: CPU fallback model load failed\n");
+        return nullptr;
+    }
+
+    ctx = llama_init_from_model(cpu_model, ctx_params);
+    if (!ctx) {
+        LOGE("llama_bridge: CPU fallback context init failed\n");
+        llama_model_free(cpu_model);
+        return nullptr;
+    }
+
+    *model = cpu_model;
+    return ctx;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -347,7 +402,8 @@ llama_bridge_context * llama_bridge_load_model(
     int32_t n_batch     = 512;
     int32_t n_threads   = 4;
     bool    flash_attn  = true;
-    int32_t n_gpu_layers = 99; // offload as many as possible
+    int32_t n_gpu_layers = -1; // offload as many as possible
+    bool    fallback_to_cpu = true;
 
     if (params_json && params_json[0]) {
         try {
@@ -357,6 +413,7 @@ llama_bridge_context * llama_bridge_load_model(
             if (p.contains("n_threads"))    n_threads   = p["n_threads"].get<int32_t>();
             if (p.contains("flash_attn"))   flash_attn  = p["flash_attn"].get<bool>();
             if (p.contains("n_gpu_layers")) n_gpu_layers = p["n_gpu_layers"].get<int32_t>();
+            if (p.contains("fallback_to_cpu")) fallback_to_cpu = p["fallback_to_cpu"].get<bool>();
         } catch (...) {
             LOGW("llama_bridge: failed to parse params JSON, using defaults\n");
         }
@@ -375,8 +432,9 @@ llama_bridge_context * llama_bridge_load_model(
     llama_model_params model_params = llama_model_default_params();
     model_params.n_gpu_layers = n_gpu_layers;
 
-    LOGI("llama_bridge: loading model from %s\n", model_path);
-    bctx->model = llama_model_load_from_file(model_path, model_params);
+    LOGI("llama_bridge: loading model from %s (n_gpu_layers=%d, fallback_to_cpu=%s)\n",
+         model_path, n_gpu_layers, fallback_to_cpu ? "true" : "false");
+    bctx->model = load_model_with_gpu_fallback(model_path, model_params, fallback_to_cpu);
     if (!bctx->model) {
         LOGE("llama_bridge: failed to load model\n");
         delete bctx;
@@ -392,7 +450,13 @@ llama_bridge_context * llama_bridge_load_model(
     ctx_params.n_threads_batch = n_threads;
     ctx_params.flash_attn_type = flash_attn ? LLAMA_FLASH_ATTN_TYPE_ENABLED : LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
-    bctx->ctx = llama_init_from_model(bctx->model, ctx_params);
+    bctx->ctx = init_context_with_gpu_fallback(
+        &bctx->model,
+        ctx_params,
+        model_path,
+        n_gpu_layers,
+        fallback_to_cpu
+    );
     if (!bctx->ctx) {
         LOGE("llama_bridge: failed to create context\n");
         llama_model_free(bctx->model);

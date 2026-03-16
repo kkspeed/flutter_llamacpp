@@ -1,8 +1,8 @@
 /// Flutter plugin wrapping llama.cpp for on-device LLM inference.
 ///
 /// Provides an OpenAI-compatible chat/completion API with multi-modal
-/// (vision) and tool calling support. Targets Android (CPU + OpenCL GPU)
-/// and iOS (CPU + Metal GPU).
+/// (vision) and tool calling support. Targets Android (CPU + OpenCL/Vulkan GPU)
+/// and iOS (Metal GPU by default with automatic CPU fallback).
 ///
 /// ## Quick Start
 ///

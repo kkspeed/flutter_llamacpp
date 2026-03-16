@@ -87,11 +87,17 @@ if(NOT MSVC)
 endif()
 
 # ---------------------------------------------------------------------------
-# llama_bridge shared library
+# llama_bridge library
 # ---------------------------------------------------------------------------
-add_library(llama_bridge SHARED
-    llama_bridge.cpp
-)
+if(APPLE)
+    add_library(llama_bridge STATIC
+        llama_bridge.cpp
+    )
+else()
+    add_library(llama_bridge SHARED
+        llama_bridge.cpp
+    )
+endif()
 
 target_include_directories(llama_bridge PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"

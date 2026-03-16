@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:ffi';
+import 'dart:io' show Platform;
 
 import 'ffi/llama_bindings.dart';
 
@@ -20,21 +21,33 @@ class ModelParams {
   /// Number of layers to offload to GPU (-1 = all).
   final int nGpuLayers;
 
+  /// Retry with CPU-only execution if GPU-backed model/context init fails.
+  final bool fallbackToCpu;
+
   const ModelParams({
     this.nCtx = 4096,
-    this.nBatch = 512,
-    this.nThreads = 4,
+    this.nBatch = 1024,
+    this.nThreads = 0,
     this.flashAttn = true,
-    this.nGpuLayers = 99,
+    this.nGpuLayers = -1,
+    this.fallbackToCpu = true,
   });
 
   String toJson() => jsonEncode({
-        'n_ctx': nCtx,
-        'n_batch': nBatch,
-        'n_threads': nThreads,
-        'flash_attn': flashAttn,
-        'n_gpu_layers': nGpuLayers,
-      });
+    'n_ctx': nCtx,
+    'n_batch': nBatch,
+    'n_threads': nThreads,
+    'flash_attn': flashAttn,
+    'n_gpu_layers': effectiveNGpuLayers,
+    'fallback_to_cpu': fallbackToCpu,
+  });
+
+  int get effectiveNGpuLayers {
+    if (nGpuLayers >= 0) {
+      return nGpuLayers;
+    }
+    return Platform.isIOS || Platform.isMacOS ? 999 : -1;
+  }
 }
 
 /// Represents a loaded LLM model.
@@ -66,7 +79,10 @@ class LlamaModel {
   ///
   /// Returns a [LlamaModel] instance on success.
   /// Throws [Exception] if the model fails to load.
-  static LlamaModel load(String path, {ModelParams params = const ModelParams()}) {
+  static LlamaModel load(
+    String path, {
+    ModelParams params = const ModelParams(),
+  }) {
     final bindings = LlamaBindings.instance();
     final handle = bindings.loadModel(path, paramsJson: params.toJson());
 
@@ -85,7 +101,9 @@ class LlamaModel {
     _ensureNotDisposed();
     final status = _bindings.loadMmproj(_handle, mmprojPath);
     if (status != 0) {
-      throw Exception('Failed to load vision projector from: $mmprojPath (status: $status)');
+      throw Exception(
+        'Failed to load vision projector from: $mmprojPath (status: $status)',
+      );
     }
   }
 

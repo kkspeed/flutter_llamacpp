@@ -121,6 +121,7 @@ const _benchmarkMaxTokens = 96;
 
 enum _BackendMode {
   cpu('CPU', 0),
+  metal('Metal', -1),
   vulkan('Vulkan', 99);
 
   const _BackendMode(this.label, this.nGpuLayers);
@@ -162,7 +163,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
   // Model selection
   _ModelConfig _selectedModel = _availableModels[0];
-  _BackendMode _selectedBackend = _BackendMode.cpu;
+  late _BackendMode _selectedBackend =
+      Platform.isIOS ? _BackendMode.metal : _BackendMode.cpu;
 
   // Attached images for the next message
   final List<File> _pendingImages = [];
@@ -175,6 +177,16 @@ class _ChatScreenState extends State<ChatScreen> {
     if (cores >= 8) return 8;
     if (cores >= 6) return 6;
     return cores >= 4 ? cores : 4;
+  }
+
+  List<_BackendMode> get _availableBackends {
+    if (Platform.isIOS || Platform.isMacOS) {
+      return const [_BackendMode.metal, _BackendMode.cpu];
+    }
+    if (Platform.isAndroid) {
+      return const [_BackendMode.cpu, _BackendMode.vulkan];
+    }
+    return const [_BackendMode.cpu];
   }
 
   @override
@@ -825,7 +837,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       dropdownColor:
                           Theme.of(context).colorScheme.surfaceContainerHighest,
                       items:
-                          _BackendMode.values.map((backend) {
+                          _availableBackends.map((backend) {
                             return DropdownMenuItem(
                               value: backend,
                               child: Text(

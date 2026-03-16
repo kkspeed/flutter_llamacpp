@@ -30,6 +30,7 @@ chat/completion API with multi-modal and tool calling support.
     'DEFINES_MODULE' => 'YES',
     # Suppress warnings from llama.cpp
     'GCC_WARN_INHIBIT_ALL_WARNINGS' => 'YES',
+    'OTHER_LDFLAGS' => '$(inherited) -force_load "${PODS_TARGET_SRCROOT}/build-ios/libllama_bridge.a"',
     'HEADER_SEARCH_PATHS' => [
       "\"#{native_dir}\"",
       "\"#{llama_cpp_dir}/include\"",
@@ -47,12 +48,18 @@ chat/completion API with multi-modal and tool calling support.
       BUILD_DIR="${PODS_TARGET_SRCROOT}/build-ios"
       NATIVE_DIR="#{native_dir}"
 
+      rm -f "${BUILD_DIR}/libllama_bridge.dylib"
+
       cmake -B "${BUILD_DIR}" -S "${NATIVE_DIR}" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DLLAMA_BUILD_COMMON=ON \
         -DLLAMA_OPENSSL=OFF \
+        -DGGML_ACCELERATE=ON \
+        -DGGML_BLAS=ON \
+        -DGGML_BLAS_VENDOR=Apple \
         -DGGML_METAL=ON \
+        -DGGML_METAL_NDEBUG=ON \
         -DGGML_METAL_EMBED_LIBRARY=ON \
         -DGGML_NATIVE=OFF \
         -DGGML_OPENMP=OFF \
@@ -66,11 +73,11 @@ chat/completion API with multi-modal and tool calling support.
 
   # Link the built static libraries
   s.vendored_libraries = [
-    'build-ios/libllama_bridge.a',
     'build-ios/build-llama/src/libllama.a',
     'build-ios/build-llama/ggml/src/libggml.a',
     'build-ios/build-llama/ggml/src/libggml-base.a',
-    'build-ios/build-llama/ggml/src/ggml-cpu/libggml-cpu.a',
+    'build-ios/build-llama/ggml/src/libggml-cpu.a',
+    'build-ios/build-llama/ggml/src/ggml-blas/libggml-blas.a',
     'build-ios/build-llama/ggml/src/ggml-metal/libggml-metal.a',
     'build-ios/build-llama/common/libcommon.a',
     'build-ios/libmtmd.a',

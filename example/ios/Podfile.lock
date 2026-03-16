@@ -77,7 +77,7 @@ SPEC CHECKSUMS:
   DKPhotoGallery: b3834fecb755ee09a593d7c9e389d8b5d6deed60
   file_picker: a0560bc09d61de87f12d246fc47d2119e6ef37be
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
-  flutter_llamacpp: 79af7a1abc0f4bf25d8ba5ecbd3275f6a2641748
+  flutter_llamacpp: ec0cb57504b6937fa15d4ca4da08906728caf735
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880
   permission_handler_apple: 4ed2196e43d0651e8ff7ca3483a069d469701f2d
   SDWebImage: 16309af6d214ba3f77a7c6f6fdda888cb313a50a
